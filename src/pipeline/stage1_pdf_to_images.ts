@@ -7,11 +7,7 @@
 
 import * as fs from "fs/promises";
 import { PageImage } from "@/schema/types";
-import { renderPageAsImage, getDocumentProxy, configureUnPDF } from "unpdf";
-import * as canvas from "canvas";
-
-// Configure unpdf with canvas for Node.js
-configureUnPDF({ canvas });
+import { renderPageAsImage, getDocumentProxy } from "unpdf";
 
 /** Configuration for PDF rendering */
 export interface RenderOptions {
@@ -67,10 +63,10 @@ export async function pdfBytesToImages(
   const pageImages: PageImage[] = [];
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    // Render page to image using unpdf
+    // Render page to image using unpdf with @napi-rs/canvas for Node.js
     const imageResult = await renderPageAsImage(pdf, pageNum, {
       scale: opts.scale,
-      // unpdf returns PNG by default
+      canvasImport: () => import("@napi-rs/canvas"),
     });
 
     // Convert to base64
