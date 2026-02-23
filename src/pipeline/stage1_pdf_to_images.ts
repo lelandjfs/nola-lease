@@ -2,35 +2,12 @@
  * Stage 1: PDF to Page Images
  *
  * Converts PDF pages to high-quality images for vision model processing.
- * Uses pdfjs-dist (Mozilla PDF.js) for pure JavaScript PDF rendering.
- * Works on Vercel serverless with polyfills from instrumentation.ts.
+ * Uses unpdf for serverless-compatible PDF rendering.
  */
 
 import * as fs from "fs/promises";
 import { PageImage } from "@/schema/types";
-
-// Dynamic import for pdfjs-dist (legacy build for Node.js)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let pdfjsLib: any;
-let pdfjsInitialized = false;
-
-async function getPdfJs() {
-  if (!pdfjsLib) {
-    // Use legacy build - designed for non-browser environments
-    pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  }
-
-  if (!pdfjsInitialized) {
-    // Disable worker completely - use fake worker mode
-    // Setting workerPort to null forces synchronous processing
-    pdfjsLib.GlobalWorkerOptions.workerPort = null;
-    // Also set a dummy workerSrc to prevent the "not specified" error
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "data:,";
-    pdfjsInitialized = true;
-  }
-
-  return pdfjsLib;
-}
+import { renderPageAsImage, getDocumentProxy } from "unpdf";
 
 /** Configuration for PDF rendering */
 export interface RenderOptions {
@@ -80,55 +57,29 @@ export async function pdfBytesToImages(
   options: RenderOptions = {}
 ): Promise<PageImage[]> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  const pdfjs = await getPdfJs();
 
-  // Load PDF document (disable worker for serverless compatibility)
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(pdfBytes),
-    useSystemFonts: true,
-    disableFontFace: true,
-    isEvalSupported: false,
-    useWorkerFetch: false,
-  });
-
-  const pdfDoc = await loadingTask.promise;
+  // Load PDF document using unpdf
+  const pdf = await getDocumentProxy(new Uint8Array(pdfBytes));
   const pageImages: PageImage[] = [];
 
-  // Dynamically import canvas for Node.js rendering
-  const { createCanvas } = await import("canvas");
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    // Render page to image using unpdf
+    const imageResult = await renderPageAsImage(pdf, pageNum, {
+      scale: opts.scale,
+      // unpdf returns PNG by default
+    });
 
-  for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
-    const page = await pdfDoc.getPage(pageNum);
+    // Convert to base64
+    const base64 = Buffer.from(imageResult).toString("base64");
+
+    // Get page dimensions (approximate based on scale)
+    const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: opts.scale });
-
-    // Create canvas for rendering
-    const canvas = createCanvas(viewport.width, viewport.height);
-    const context = canvas.getContext("2d");
-
-    // Render page to canvas
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const renderContext: any = {
-      canvasContext: context,
-      viewport,
-    };
-    await page.render(renderContext).promise;
-
-    // Convert canvas to base64
-    let base64: string;
-    if (opts.format === "png") {
-      const buffer = canvas.toBuffer("image/png");
-      base64 = buffer.toString("base64");
-    } else {
-      const buffer = canvas.toBuffer("image/jpeg", {
-        quality: opts.jpegQuality / 100,
-      });
-      base64 = buffer.toString("base64");
-    }
 
     pageImages.push({
       pageNumber: pageNum,
       base64,
-      format: opts.format,
+      format: "png", // unpdf outputs PNG
       width: Math.round(viewport.width),
       height: Math.round(viewport.height),
     });
@@ -142,14 +93,6 @@ export async function pdfBytesToImages(
  */
 export async function getPdfPageCount(pdfPath: string): Promise<number> {
   const pdfBytes = await fs.readFile(pdfPath);
-  const pdfjs = await getPdfJs();
-
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(pdfBytes),
-    isEvalSupported: false,
-    useWorkerFetch: false,
-  });
-
-  const pdfDoc = await loadingTask.promise;
-  return pdfDoc.numPages;
+  const pdf = await getDocumentProxy(new Uint8Array(pdfBytes));
+  return pdf.numPages;
 }
