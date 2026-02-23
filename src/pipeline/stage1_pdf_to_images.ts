@@ -2,31 +2,36 @@
  * Stage 1: PDF to Page Images
  *
  * Converts PDF pages to high-quality images for vision model processing.
- * Uses Poppler's pdftoppm for reliable rendering.
+ * Uses pdfjs-dist (Mozilla PDF.js) for pure JavaScript PDF rendering.
+ * Works on Vercel serverless without system dependencies.
  */
 
-import { exec } from "child_process";
-import { promisify } from "util";
 import * as fs from "fs/promises";
-import * as path from "path";
-import * as os from "os";
 import { PageImage } from "@/schema/types";
 
-const execAsync = promisify(exec);
+// Dynamic import for pdfjs-dist to handle ESM/CJS
+let pdfjsLib: typeof import("pdfjs-dist");
+
+async function getPdfJs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import("pdfjs-dist");
+  }
+  return pdfjsLib;
+}
 
 /** Configuration for PDF rendering */
 export interface RenderOptions {
-  /** DPI for rendering (default: 200, good balance of quality/size) */
-  dpi?: number;
-  /** Output format (default: png) */
+  /** Scale factor for rendering (default: 2.0 for good quality) */
+  scale?: number;
+  /** Output format (default: jpeg) */
   format?: "png" | "jpeg";
-  /** JPEG quality if format is jpeg (default: 90) */
+  /** JPEG quality if format is jpeg (default: 85) */
   jpegQuality?: number;
 }
 
 const DEFAULT_OPTIONS: Required<RenderOptions> = {
-  dpi: 150,  // Reduced from 200 to keep payload size manageable
-  format: "jpeg",  // JPEG is much smaller than PNG
+  scale: 2.0, // 2x scale for good OCR quality
+  format: "jpeg",
   jpegQuality: 85,
 };
 
@@ -43,115 +48,91 @@ export async function pdfToImages(
 ): Promise<PageImage[]> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
-  // Verify file exists
+  // Read PDF file
+  let pdfBytes: Buffer;
   try {
-    await fs.access(pdfPath);
+    pdfBytes = await fs.readFile(pdfPath);
   } catch {
     throw new Error(`PDF file not found: ${pdfPath}`);
   }
 
-  // Create temp directory for output images
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lease-pdf-"));
+  return pdfBytesToImages(pdfBytes, opts);
+}
 
-  try {
-    // Build pdftoppm command
-    const outputPrefix = path.join(tempDir, "page");
-    const formatFlag = opts.format === "png" ? "-png" : "-jpeg";
+/**
+ * Convert PDF bytes (from memory) to page images.
+ */
+export async function pdfBytesToImages(
+  pdfBytes: Buffer,
+  options: RenderOptions = {}
+): Promise<PageImage[]> {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const pdfjs = await getPdfJs();
 
-    let cmd = `pdftoppm ${formatFlag} -r ${opts.dpi}`;
-    if (opts.format === "jpeg") {
-      cmd += ` -jpegopt quality=${opts.jpegQuality}`;
-    }
-    cmd += ` "${pdfPath}" "${outputPrefix}"`;
+  // Load PDF document
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(pdfBytes),
+    useSystemFonts: true,
+    disableFontFace: true,
+  });
 
-    // Execute pdftoppm
-    await execAsync(cmd);
+  const pdfDoc = await loadingTask.promise;
+  const pageImages: PageImage[] = [];
 
-    // Read generated images
-    const files = await fs.readdir(tempDir);
-    // pdftoppm uses .jpg extension for jpeg format
-    const extension = opts.format === "jpeg" ? "jpg" : opts.format;
-    const imageFiles = files
-      .filter((f) => f.startsWith("page-") && f.endsWith(`.${extension}`))
-      .sort((a, b) => {
-        // Sort by page number (page-01.png, page-02.png, etc.)
-        const numA = parseInt(a.match(/page-(\d+)/)?.[1] ?? "0");
-        const numB = parseInt(b.match(/page-(\d+)/)?.[1] ?? "0");
-        return numA - numB;
+  // Dynamically import canvas for Node.js rendering
+  const { createCanvas } = await import("canvas");
+
+  for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+    const page = await pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: opts.scale });
+
+    // Create canvas for rendering
+    const canvas = createCanvas(viewport.width, viewport.height);
+    const context = canvas.getContext("2d");
+
+    // Render page to canvas
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const renderContext: any = {
+      canvasContext: context,
+      viewport,
+    };
+    await page.render(renderContext).promise;
+
+    // Convert canvas to base64
+    let base64: string;
+    if (opts.format === "png") {
+      const buffer = canvas.toBuffer("image/png");
+      base64 = buffer.toString("base64");
+    } else {
+      const buffer = canvas.toBuffer("image/jpeg", {
+        quality: opts.jpegQuality / 100,
       });
-
-    const pageImages: PageImage[] = [];
-
-    for (let i = 0; i < imageFiles.length; i++) {
-      const filePath = path.join(tempDir, imageFiles[i]);
-      const imageBuffer = await fs.readFile(filePath);
-      const base64 = imageBuffer.toString("base64");
-
-      // Get image dimensions (simple approach using file size heuristics)
-      // In production, you might want to use sharp or similar to get exact dimensions
-      const stats = await fs.stat(filePath);
-
-      pageImages.push({
-        pageNumber: i + 1,
-        base64,
-        format: opts.format,
-        // Approximate dimensions based on DPI and standard letter size
-        // Actual dimensions would require image parsing
-        width: Math.round(8.5 * opts.dpi),
-        height: Math.round(11 * opts.dpi),
-      });
+      base64 = buffer.toString("base64");
     }
 
-    return pageImages;
-  } finally {
-    // Cleanup temp directory
-    try {
-      const files = await fs.readdir(tempDir);
-      for (const file of files) {
-        await fs.unlink(path.join(tempDir, file));
-      }
-      await fs.rmdir(tempDir);
-    } catch {
-      // Ignore cleanup errors
-    }
+    pageImages.push({
+      pageNumber: pageNum,
+      base64,
+      format: opts.format,
+      width: Math.round(viewport.width),
+      height: Math.round(viewport.height),
+    });
   }
+
+  return pageImages;
 }
 
 /**
  * Get the number of pages in a PDF without rendering.
  */
 export async function getPdfPageCount(pdfPath: string): Promise<number> {
-  try {
-    const { stdout } = await execAsync(`pdfinfo "${pdfPath}" | grep "^Pages:"`);
-    const match = stdout.match(/Pages:\s+(\d+)/);
-    return match ? parseInt(match[1]) : 0;
-  } catch {
-    // Fallback: render and count (slower)
-    const images = await pdfToImages(pdfPath);
-    return images.length;
-  }
-}
+  const pdfBytes = await fs.readFile(pdfPath);
+  const pdfjs = await getPdfJs();
 
-/**
- * Convert PDF bytes (from memory) to page images.
- * Writes to temp file, processes, then cleans up.
- */
-export async function pdfBytesToImages(
-  pdfBytes: Buffer,
-  options: RenderOptions = {}
-): Promise<PageImage[]> {
-  // Write bytes to temp file
-  const tempPdf = path.join(os.tmpdir(), `lease-${Date.now()}.pdf`);
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(pdfBytes),
+  });
 
-  try {
-    await fs.writeFile(tempPdf, pdfBytes);
-    return await pdfToImages(tempPdf, options);
-  } finally {
-    // Cleanup
-    try {
-      await fs.unlink(tempPdf);
-    } catch {
-      // Ignore cleanup errors
-    }
-  }
+  const pdfDoc = await loadingTask.promise;
+  return pdfDoc.numPages;
 }
