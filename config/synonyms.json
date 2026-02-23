@@ -1,0 +1,115 @@
+{
+  "free_rent": {
+    "synonyms": [
+      "Abated Rent",
+      "Rent Credit",
+      "Rent Concession",
+      "Rent-Free Period",
+      "Rent Abatement",
+      "Rent Holiday",
+      "Prepaid Rent"
+    ],
+    "absence_indicators": ["Not Applicable", "N/A", "None", "Intentionally Omitted"]
+  },
+  "lease_type_nnn": {
+    "synonyms": ["triple-net", "NNN", "Net Net Net", "Triple Net"]
+  },
+  "lease_type_fsg": {
+    "synonyms": [
+      "GROSS",
+      "Full Service Gross",
+      "Base Year Gross",
+      "Full Service",
+      "Modified Gross"
+    ]
+  },
+  "tenant_name_suffixes": [
+    "Inc.",
+    "Corp.",
+    "Corporation",
+    "LLC",
+    "LLP",
+    "LP",
+    "Ltd.",
+    "Co.",
+    "P.C.",
+    "PLLC"
+  ],
+  "tenant_name_dba_indicators": [
+    "d/b/a",
+    "doing business as",
+    "operating as",
+    "trading as",
+    "also known as",
+    "a/k/a"
+  ],
+  "starting_rent": {
+    "synonyms": [
+      "Minimum Monthly Rent",
+      "Monthly Installment of Base Rent",
+      "Base Rent",
+      "Monthly Rent",
+      "Monthly Base Rent"
+    ]
+  },
+  "suite_sf": {
+    "synonyms": [
+      "RSF",
+      "Rentable Square Feet",
+      "Premises Area",
+      "Agreed Areas",
+      "Rentable Area",
+      "Leased Area"
+    ]
+  },
+  "renewal_option": {
+    "synonyms": [
+      "option to extend",
+      "Renewal Option",
+      "Renewal Right",
+      "Extension Option",
+      "Option to Renew"
+    ]
+  },
+  "rofr": {
+    "synonyms": [
+      "Right of First Refusal",
+      "ROFR",
+      "First Refusal Right",
+      "Matching Right",
+      "right to match"
+    ]
+  },
+  "rofo": {
+    "synonyms": [
+      "Right of First Offer",
+      "ROFO",
+      "First Offer Right",
+      "first right to lease"
+    ]
+  },
+  "termination_false_positives": [
+    "casualty",
+    "destruction",
+    "condemnation",
+    "default",
+    "breach",
+    "Force Majeure",
+    "fails to deliver possession",
+    "waives any right to terminate"
+  ],
+  "lease_start": {
+    "synonyms": [
+      "Commencement Date",
+      "Effective Date",
+      "Start Date",
+      "Lease Commencement"
+    ],
+    "conditional_patterns": [
+      "earlier to occur",
+      "later to occur",
+      "later of",
+      "anticipated to be"
+    ]
+  }
+}

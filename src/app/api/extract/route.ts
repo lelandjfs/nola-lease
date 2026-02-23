@@ -1,0 +1,79 @@
+import { NextRequest, NextResponse } from "next/server";
+import { writeFile, unlink, mkdir } from "fs/promises";
+import { existsSync } from "fs";
+import path from "path";
+import { runPipeline, wasSkipped } from "@/pipeline";
+
+// Ensure uploads directory exists
+const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+
+export async function POST(request: NextRequest) {
+  let tempFilePath: string | null = null;
+
+  try {
+    // Ensure upload directory exists
+    if (!existsSync(UPLOAD_DIR)) {
+      await mkdir(UPLOAD_DIR, { recursive: true });
+    }
+
+    // Parse form data
+    const formData = await request.formData();
+    const file = formData.get("file") as File | null;
+
+    if (!file) {
+      return NextResponse.json(
+        { error: "No file provided" },
+        { status: 400 }
+      );
+    }
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      return NextResponse.json(
+        { error: "File must be a PDF" },
+        { status: 400 }
+      );
+    }
+
+    // Write file to temp location
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    tempFilePath = path.join(UPLOAD_DIR, `${Date.now()}_${file.name}`);
+    await writeFile(tempFilePath, buffer);
+
+    // Run the pipeline
+    const result = await runPipeline(tempFilePath);
+
+    // Check if skipped (e.g., amendment)
+    if (wasSkipped(result)) {
+      return NextResponse.json(
+        { error: result.reason, skipped: true },
+        { status: 422 }
+      );
+    }
+
+    // Return pipeline output
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error("Extraction error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Extraction failed" },
+      { status: 500 }
+    );
+  } finally {
+    // Clean up temp file
+    if (tempFilePath) {
+      try {
+        await unlink(tempFilePath);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+}
+
+// Increase body size limit for PDF uploads
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
