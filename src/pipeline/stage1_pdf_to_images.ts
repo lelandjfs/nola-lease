@@ -12,14 +12,23 @@ import { PageImage } from "@/schema/types";
 // Dynamic import for pdfjs-dist (legacy build for Node.js)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pdfjsLib: any;
+let pdfjsInitialized = false;
 
 async function getPdfJs() {
   if (!pdfjsLib) {
-    // Use legacy build - doesn't require web workers
+    // Use legacy build - designed for non-browser environments
     pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    // Disable worker to avoid module resolution issues in serverless
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "";
   }
+
+  if (!pdfjsInitialized) {
+    // Disable worker completely - use fake worker mode
+    // Setting workerPort to null forces synchronous processing
+    pdfjsLib.GlobalWorkerOptions.workerPort = null;
+    // Also set a dummy workerSrc to prevent the "not specified" error
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "data:,";
+    pdfjsInitialized = true;
+  }
+
   return pdfjsLib;
 }
 
