@@ -65,16 +65,17 @@ export async function detectLeaseType(
     );
   }
 
-  // Build message with image
+  // Decode text from base64 (stage1 now extracts text, not images)
+  const pageText = Buffer.from(firstPage.base64, "base64").toString("utf-8");
+
+  // Build message with text content
   const messages: Message[] = [
     {
       role: "user",
       content: [
-        { type: "text", content: LEASE_TYPE_PROMPT },
         {
-          type: "image",
-          base64: firstPage.base64,
-          mediaType: `image/${firstPage.format}` as "image/png" | "image/jpeg",
+          type: "text",
+          content: `${LEASE_TYPE_PROMPT}\n\n--- FIRST PAGE TEXT ---\n${pageText}`,
         },
       ],
     },
