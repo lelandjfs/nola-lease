@@ -7,15 +7,10 @@ export async function register() {
   // Only run on server
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // Polyfill DOMMatrix for pdfjs-dist canvas rendering
+    // Use canvas package's DOMMatrix which is compatible
     if (typeof globalThis.DOMMatrix === "undefined") {
-      const DOMMatrix = (await import("dommatrix")).default;
-      (globalThis as Record<string, unknown>).DOMMatrix = DOMMatrix;
-    }
-
-    // Polyfill Path2D from canvas
-    if (typeof globalThis.Path2D === "undefined") {
       const canvas = await import("canvas");
-      (globalThis as Record<string, unknown>).Path2D = canvas.Path2D;
+      (globalThis as Record<string, unknown>).DOMMatrix = canvas.DOMMatrix;
     }
   }
 }
