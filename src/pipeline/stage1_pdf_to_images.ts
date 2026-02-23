@@ -2,31 +2,21 @@
  * Stage 1: PDF to Page Images
  *
  * Converts PDF pages to high-quality images for vision model processing.
- * Uses pdfjs-dist (Mozilla PDF.js) for pure JavaScript PDF rendering.
+ * Uses pdfjs-dist legacy build for Node.js compatibility.
  * Works on Vercel serverless without system dependencies.
  */
-
-// Polyfill browser APIs FIRST, before any other imports (required by pdfjs-dist)
-/* eslint-disable @typescript-eslint/no-require-imports */
-if (typeof globalThis.DOMMatrix === "undefined") {
-  // dommatrix package exports the class as default
-  globalThis.DOMMatrix = require("dommatrix");
-}
-if (typeof globalThis.Path2D === "undefined") {
-  const canvas = require("canvas");
-  globalThis.Path2D = canvas.Path2D;
-}
-/* eslint-enable @typescript-eslint/no-require-imports */
 
 import * as fs from "fs/promises";
 import { PageImage } from "@/schema/types";
 
-// Dynamic import for pdfjs-dist to handle ESM/CJS
-let pdfjsLib: typeof import("pdfjs-dist");
+// Use legacy build which is designed for non-browser environments
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let pdfjsLib: any;
 
 async function getPdfJs() {
   if (!pdfjsLib) {
-    pdfjsLib = await import("pdfjs-dist");
+    // Legacy build doesn't require DOMMatrix or other browser APIs
+    pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
   }
   return pdfjsLib;
 }
