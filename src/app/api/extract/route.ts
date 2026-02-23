@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, unlink, mkdir } from "fs/promises";
-import { existsSync } from "fs";
+import { writeFile, unlink } from "fs/promises";
+import os from "os";
 import path from "path";
 import { runPipeline, wasSkipped } from "@/pipeline";
 
-// Ensure uploads directory exists
-const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+// Use /tmp for Vercel serverless compatibility
+const UPLOAD_DIR = os.tmpdir();
 
 export async function POST(request: NextRequest) {
   let tempFilePath: string | null = null;
 
   try {
-    // Ensure upload directory exists
-    if (!existsSync(UPLOAD_DIR)) {
-      await mkdir(UPLOAD_DIR, { recursive: true });
-    }
-
     // Parse form data
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
