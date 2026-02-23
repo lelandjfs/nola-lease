@@ -9,15 +9,13 @@ export async function register() {
     // Polyfill DOMMatrix for pdfjs-dist canvas rendering
     if (typeof globalThis.DOMMatrix === "undefined") {
       const DOMMatrix = (await import("dommatrix")).default;
-      // @ts-expect-error - polyfilling global
-      globalThis.DOMMatrix = DOMMatrix;
+      (globalThis as Record<string, unknown>).DOMMatrix = DOMMatrix;
     }
 
     // Polyfill Path2D from canvas
     if (typeof globalThis.Path2D === "undefined") {
       const canvas = await import("canvas");
-      // @ts-expect-error - polyfilling global
-      globalThis.Path2D = canvas.Path2D;
+      (globalThis as Record<string, unknown>).Path2D = canvas.Path2D;
     }
   }
 }
