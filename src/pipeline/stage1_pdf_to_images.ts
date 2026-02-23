@@ -9,7 +9,8 @@
 // Polyfill browser APIs FIRST, before any other imports (required by pdfjs-dist)
 /* eslint-disable @typescript-eslint/no-require-imports */
 if (typeof globalThis.DOMMatrix === "undefined") {
-  globalThis.DOMMatrix = require("dommatrix").DOMMatrix;
+  // dommatrix package exports the class as default
+  globalThis.DOMMatrix = require("dommatrix");
 }
 if (typeof globalThis.Path2D === "undefined") {
   const canvas = require("canvas");
