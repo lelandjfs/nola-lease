@@ -9,6 +9,23 @@
 import * as fs from "fs/promises";
 import { PageImage } from "@/schema/types";
 
+// Polyfill browser APIs for Node.js (required by pdfjs-dist)
+async function setupPolyfills() {
+  if (typeof globalThis.DOMMatrix === "undefined") {
+    const canvas = await import("canvas");
+    // @ts-expect-error - canvas provides DOMMatrix
+    globalThis.DOMMatrix = canvas.DOMMatrix;
+  }
+  if (typeof globalThis.Path2D === "undefined") {
+    const canvas = await import("canvas");
+    // @ts-expect-error - canvas provides Path2D
+    globalThis.Path2D = canvas.Path2D;
+  }
+}
+
+// Run polyfills immediately
+const polyfillsReady = setupPolyfills();
+
 // Dynamic import for pdfjs-dist to handle ESM/CJS
 let pdfjsLib: typeof import("pdfjs-dist");
 
@@ -46,6 +63,9 @@ export async function pdfToImages(
   pdfPath: string,
   options: RenderOptions = {}
 ): Promise<PageImage[]> {
+  // Ensure polyfills are ready
+  await polyfillsReady;
+
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
   // Read PDF file
@@ -66,6 +86,9 @@ export async function pdfBytesToImages(
   pdfBytes: Buffer,
   options: RenderOptions = {}
 ): Promise<PageImage[]> {
+  // Ensure polyfills are ready before using pdfjs
+  await polyfillsReady;
+
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const pdfjs = await getPdfJs();
 
@@ -126,6 +149,7 @@ export async function pdfBytesToImages(
  * Get the number of pages in a PDF without rendering.
  */
 export async function getPdfPageCount(pdfPath: string): Promise<number> {
+  await polyfillsReady;
   const pdfBytes = await fs.readFile(pdfPath);
   const pdfjs = await getPdfJs();
 
