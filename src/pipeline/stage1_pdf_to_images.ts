@@ -7,7 +7,11 @@
 
 import * as fs from "fs/promises";
 import { PageImage } from "@/schema/types";
-import { renderPageAsImage, getDocumentProxy } from "unpdf";
+import { renderPageAsImage, getDocumentProxy, configureUnPDF } from "unpdf";
+import * as canvas from "canvas";
+
+// Configure unpdf with canvas for Node.js
+configureUnPDF({ canvas });
 
 /** Configuration for PDF rendering */
 export interface RenderOptions {
