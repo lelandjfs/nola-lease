@@ -9,13 +9,16 @@
 import * as fs from "fs/promises";
 import { PageImage } from "@/schema/types";
 
-// Dynamic import for pdfjs-dist
+// Dynamic import for pdfjs-dist (legacy build for Node.js)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pdfjsLib: any;
 
 async function getPdfJs() {
   if (!pdfjsLib) {
-    pdfjsLib = await import("pdfjs-dist");
+    // Use legacy build - doesn't require web workers
+    pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    // Disable worker to avoid module resolution issues in serverless
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "";
   }
   return pdfjsLib;
 }
@@ -70,11 +73,13 @@ export async function pdfBytesToImages(
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const pdfjs = await getPdfJs();
 
-  // Load PDF document
+  // Load PDF document (disable worker for serverless compatibility)
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfBytes),
     useSystemFonts: true,
     disableFontFace: true,
+    isEvalSupported: false,
+    useWorkerFetch: false,
   });
 
   const pdfDoc = await loadingTask.promise;
@@ -132,6 +137,8 @@ export async function getPdfPageCount(pdfPath: string): Promise<number> {
 
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfBytes),
+    isEvalSupported: false,
+    useWorkerFetch: false,
   });
 
   const pdfDoc = await loadingTask.promise;
