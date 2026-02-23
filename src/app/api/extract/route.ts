@@ -66,9 +66,5 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Increase body size limit for PDF uploads
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// Route segment config for large PDF uploads
+export const maxDuration = 60; // Allow up to 60 seconds for processing
