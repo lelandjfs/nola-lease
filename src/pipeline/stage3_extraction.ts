@@ -61,21 +61,19 @@ export async function extractLeaseData(
   // Build system prompt
   const systemPrompt = buildExtractionSystemPrompt(documentType);
 
-  // Build user message with all page text (stage1 now extracts text, not images)
-  // Decode all page text from base64 and combine
-  const allPageText = pages
-    .map((page, i) => {
-      const text = Buffer.from(page.base64, "base64").toString("utf-8");
-      return `--- PAGE ${i + 1} ---\n${text}`;
-    })
-    .join("\n\n");
-
+  // Build user message with all page images
   const userContent: MessageContent[] = [
-    {
-      type: "text",
-      content: `${buildExtractionUserPrompt()}\n\n--- LEASE DOCUMENT TEXT ---\n${allPageText}`,
-    },
+    { type: "text", content: buildExtractionUserPrompt() },
   ];
+
+  // Add all page images
+  for (const page of pages) {
+    userContent.push({
+      type: "image",
+      base64: page.base64,
+      mediaType: `image/${page.format}` as "image/png" | "image/jpeg",
+    });
+  }
 
   const messages: Message[] = [
     {
