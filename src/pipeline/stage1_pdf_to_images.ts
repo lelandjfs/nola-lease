@@ -2,186 +2,156 @@
  * Stage 1: PDF to Page Images
  *
  * Converts PDF pages to high-quality images for vision model processing.
- * Uses CloudConvert API for serverless-compatible PDF rendering.
+ * Uses Poppler's pdftoppm for reliable rendering.
  */
 
+import { exec } from "child_process";
+import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { PageImage } from "@/schema/types";
 
+const execAsync = promisify(exec);
+
 /** Configuration for PDF rendering */
 export interface RenderOptions {
-  /** DPI for rendering (default: 150) */
+  /** DPI for rendering (default: 200, good balance of quality/size) */
   dpi?: number;
-  /** Output format (default: jpeg) */
+  /** Output format (default: png) */
   format?: "png" | "jpeg";
-  /** JPEG quality if format is jpeg (default: 85) */
+  /** JPEG quality if format is jpeg (default: 90) */
   jpegQuality?: number;
 }
 
 const DEFAULT_OPTIONS: Required<RenderOptions> = {
-  dpi: 150,
-  format: "jpeg",
+  dpi: 150,  // Reduced from 200 to keep payload size manageable
+  format: "jpeg",  // JPEG is much smaller than PNG
   jpegQuality: 85,
 };
 
-const CLOUDCONVERT_API_KEY = process.env.CLOUDCONVERT_API_KEY;
-
 /**
- * Convert PDF bytes to page images using CloudConvert API.
- */
-export async function pdfBytesToImages(
-  pdfBytes: Buffer,
-  options: RenderOptions = {}
-): Promise<PageImage[]> {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
-
-  if (!CLOUDCONVERT_API_KEY) {
-    throw new Error("CLOUDCONVERT_API_KEY environment variable is required");
-  }
-
-  // Step 1: Create a job with upload, convert, and export tasks
-  const jobResponse = await fetch("https://api.cloudconvert.com/v2/jobs", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${CLOUDCONVERT_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      tasks: {
-        "upload-pdf": {
-          operation: "import/upload",
-        },
-        "convert-to-images": {
-          operation: "convert",
-          input: ["upload-pdf"],
-          output_format: opts.format === "png" ? "png" : "jpg",
-          engine: "poppler",
-          pixel_density: opts.dpi,
-          ...(opts.format === "jpeg" ? { quality: opts.jpegQuality } : {}),
-        },
-        "export-images": {
-          operation: "export/url",
-          input: ["convert-to-images"],
-        },
-      },
-    }),
-  });
-
-  if (!jobResponse.ok) {
-    const error = await jobResponse.text();
-    throw new Error(`CloudConvert job creation failed: ${error}`);
-  }
-
-  const job = await jobResponse.json();
-  const uploadTask = job.data.tasks.find(
-    (t: { name: string }) => t.name === "upload-pdf"
-  );
-
-  if (!uploadTask?.result?.form) {
-    throw new Error("Upload task not ready");
-  }
-
-  // Step 2: Upload the PDF
-  const formData = new FormData();
-  for (const [key, value] of Object.entries(uploadTask.result.form.parameters)) {
-    formData.append(key, value as string);
-  }
-  formData.append("file", new Blob([pdfBytes]), "document.pdf");
-
-  const uploadResponse = await fetch(uploadTask.result.form.url, {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!uploadResponse.ok) {
-    throw new Error(`PDF upload failed: ${uploadResponse.statusText}`);
-  }
-
-  // Step 3: Wait for job completion
-  const jobId = job.data.id;
-  let completedJob;
-
-  for (let i = 0; i < 60; i++) {
-    // Max 60 seconds wait
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    const statusResponse = await fetch(
-      `https://api.cloudconvert.com/v2/jobs/${jobId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${CLOUDCONVERT_API_KEY}`,
-        },
-      }
-    );
-
-    completedJob = await statusResponse.json();
-
-    if (completedJob.data.status === "finished") {
-      break;
-    } else if (completedJob.data.status === "error") {
-      throw new Error(
-        `CloudConvert job failed: ${JSON.stringify(completedJob.data.tasks)}`
-      );
-    }
-  }
-
-  if (completedJob?.data.status !== "finished") {
-    throw new Error("CloudConvert job timed out");
-  }
-
-  // Step 4: Download the converted images
-  const exportTask = completedJob.data.tasks.find(
-    (t: { name: string }) => t.name === "export-images"
-  );
-
-  if (!exportTask?.result?.files) {
-    throw new Error("No exported files found");
-  }
-
-  const pageImages: PageImage[] = [];
-
-  // Sort files by name to ensure correct page order
-  const files = exportTask.result.files.sort(
-    (a: { filename: string }, b: { filename: string }) =>
-      a.filename.localeCompare(b.filename, undefined, { numeric: true })
-  );
-
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const imageResponse = await fetch(file.url);
-    const imageBuffer = await imageResponse.arrayBuffer();
-    const base64 = Buffer.from(imageBuffer).toString("base64");
-
-    pageImages.push({
-      pageNumber: i + 1,
-      base64,
-      format: opts.format,
-      width: Math.round(8.5 * opts.dpi), // Approximate
-      height: Math.round(11 * opts.dpi),
-    });
-  }
-
-  return pageImages;
-}
-
-/**
- * Convert a PDF file to page images.
+ * Convert a PDF file to an array of page images.
+ *
+ * @param pdfPath - Path to the PDF file
+ * @param options - Rendering options
+ * @returns Array of PageImage objects with base64-encoded image data
  */
 export async function pdfToImages(
   pdfPath: string,
   options: RenderOptions = {}
 ): Promise<PageImage[]> {
-  const pdfBytes = await fs.readFile(pdfPath);
-  return pdfBytesToImages(pdfBytes, options);
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+
+  // Verify file exists
+  try {
+    await fs.access(pdfPath);
+  } catch {
+    throw new Error(`PDF file not found: ${pdfPath}`);
+  }
+
+  // Create temp directory for output images
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lease-pdf-"));
+
+  try {
+    // Build pdftoppm command
+    const outputPrefix = path.join(tempDir, "page");
+    const formatFlag = opts.format === "png" ? "-png" : "-jpeg";
+
+    let cmd = `pdftoppm ${formatFlag} -r ${opts.dpi}`;
+    if (opts.format === "jpeg") {
+      cmd += ` -jpegopt quality=${opts.jpegQuality}`;
+    }
+    cmd += ` "${pdfPath}" "${outputPrefix}"`;
+
+    // Execute pdftoppm
+    await execAsync(cmd);
+
+    // Read generated images
+    const files = await fs.readdir(tempDir);
+    // pdftoppm uses .jpg extension for jpeg format
+    const extension = opts.format === "jpeg" ? "jpg" : opts.format;
+    const imageFiles = files
+      .filter((f) => f.startsWith("page-") && f.endsWith(`.${extension}`))
+      .sort((a, b) => {
+        // Sort by page number (page-01.png, page-02.png, etc.)
+        const numA = parseInt(a.match(/page-(\d+)/)?.[1] ?? "0");
+        const numB = parseInt(b.match(/page-(\d+)/)?.[1] ?? "0");
+        return numA - numB;
+      });
+
+    const pageImages: PageImage[] = [];
+
+    for (let i = 0; i < imageFiles.length; i++) {
+      const filePath = path.join(tempDir, imageFiles[i]);
+      const imageBuffer = await fs.readFile(filePath);
+      const base64 = imageBuffer.toString("base64");
+
+      // Get image dimensions (simple approach using file size heuristics)
+      // In production, you might want to use sharp or similar to get exact dimensions
+      const stats = await fs.stat(filePath);
+
+      pageImages.push({
+        pageNumber: i + 1,
+        base64,
+        format: opts.format,
+        // Approximate dimensions based on DPI and standard letter size
+        // Actual dimensions would require image parsing
+        width: Math.round(8.5 * opts.dpi),
+        height: Math.round(11 * opts.dpi),
+      });
+    }
+
+    return pageImages;
+  } finally {
+    // Cleanup temp directory
+    try {
+      const files = await fs.readdir(tempDir);
+      for (const file of files) {
+        await fs.unlink(path.join(tempDir, file));
+      }
+      await fs.rmdir(tempDir);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
 }
 
 /**
- * Get the number of pages in a PDF.
- * Note: This requires full conversion with CloudConvert.
+ * Get the number of pages in a PDF without rendering.
  */
 export async function getPdfPageCount(pdfPath: string): Promise<number> {
-  const images = await pdfToImages(pdfPath);
-  return images.length;
+  try {
+    const { stdout } = await execAsync(`pdfinfo "${pdfPath}" | grep "^Pages:"`);
+    const match = stdout.match(/Pages:\s+(\d+)/);
+    return match ? parseInt(match[1]) : 0;
+  } catch {
+    // Fallback: render and count (slower)
+    const images = await pdfToImages(pdfPath);
+    return images.length;
+  }
+}
+
+/**
+ * Convert PDF bytes (from memory) to page images.
+ * Writes to temp file, processes, then cleans up.
+ */
+export async function pdfBytesToImages(
+  pdfBytes: Buffer,
+  options: RenderOptions = {}
+): Promise<PageImage[]> {
+  // Write bytes to temp file
+  const tempPdf = path.join(os.tmpdir(), `lease-${Date.now()}.pdf`);
+
+  try {
+    await fs.writeFile(tempPdf, pdfBytes);
+    return await pdfToImages(tempPdf, options);
+  } finally {
+    // Cleanup
+    try {
+      await fs.unlink(tempPdf);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
 }
